@@ -15,6 +15,13 @@
 
 PG_MODULE_MAGIC;
 
+typedef struct Worker {
+    char data[NAMEDATALEN];
+    char user[NAMEDATALEN];
+    int64 sleep;
+    Oid oid;
+} Worker;
+
 static int launcher_fetch;
 static int launcher_restart;
 
@@ -37,6 +44,9 @@ static void pg_quota_launcher_start(bool dynamic) {
         if (!RegisterDynamicBackgroundWorker(&worker, NULL)) ereport(ERROR, (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED), errmsg("could not register background worker"), errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
         IsUnderPostmaster = false;
     } else RegisterBackgroundWorker(&worker);
+}
+
+static void pg_quota_worker_start(Worker *w) {
 }
 
 void _PG_init(void) {
@@ -83,8 +93,14 @@ void pg_quota_launcher(Datum arg) {
         for (uint64 row = 0; row < SPI_processed; row++) {
             HeapTuple val = SPI_tuptable->vals[row];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
+            Worker w = {0};
             set_ps_display_my("row");
-            elog(LOG, "row = %lu, oid = %i, sleep = %li", row, DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID)), DatumGetInt64(SPI_getbinval_my(val, tupdesc, "sleep", false, INT8OID)));
+            w.sleep = DatumGetInt64(SPI_getbinval_my(val, tupdesc, "sleep", false, INT8OID));
+            w.oid = DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID));
+            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "data", false, TEXTOID)), w.data, sizeof(w.data));
+            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "user", false, TEXTOID)), w.user, sizeof(w.user));
+            elog(LOG, "row = %lu, user = %s, data = %s, oid = %i, sleep = %li", row, w.user, w.data, w.oid, w.sleep);
+            pg_quota_worker_start(&w);
         }
     } while (SPI_processed);
     SPI_cursor_close_my(portal);
