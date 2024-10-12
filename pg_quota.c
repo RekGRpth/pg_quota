@@ -48,6 +48,8 @@ typedef enum STMT_TYPE {
 PGDLLEXPORT void pg_quota_launcher(Datum arg);
 void _PG_init(void);
 
+PG_MODULE_MAGIC;
+
 static bool was_logged;
 static int launcher_fetch;
 static int launcher_restart;
