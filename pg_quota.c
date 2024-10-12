@@ -74,6 +74,7 @@ static void pg_quota_worker_start(Worker *w) {
     if (handle) pfree(handle);
 }
 
+#if PG_VERSION_NUM < 110000
 /*
  * Connect background worker to a database using OIDs.
  */
@@ -96,6 +97,7 @@ BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid)
 				(errmsg("invalid processing mode in background worker")));
 	SetProcessingMode(NormalProcessing);
 }
+#endif
 
 void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
