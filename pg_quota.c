@@ -21,7 +21,7 @@ static int launcher_restart;
 static void pg_quota_init(bool dynamic) {
     BackgroundWorker worker = {0};
     size_t len;
-    elog(DEBUG1, "dynamic = %s", dynamic ? "true" : "false");
+    elog(LOG, "dynamic = %s", dynamic ? "true" : "false");
     if ((len = strlcpy(worker.bgw_function_name, "pg_quota_launcher", sizeof(worker.bgw_function_name))) >= sizeof(worker.bgw_function_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_function_name))));
     if ((len = strlcpy(worker.bgw_library_name, "pg_quota", sizeof(worker.bgw_library_name))) >= sizeof(worker.bgw_library_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_library_name))));
     if ((len = strlcpy(worker.bgw_name, "postgres pg_quota launcher", sizeof(worker.bgw_name))) >= sizeof(worker.bgw_name)) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_name))));
@@ -84,7 +84,7 @@ void pg_quota_launcher(Datum arg) {
             HeapTuple val = SPI_tuptable->vals[row];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
             set_ps_display_my("row");
-            elog(DEBUG1, "row = %lu, oid = %i, sleep = %li", row, DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID)), DatumGetInt64(SPI_getbinval_my(val, tupdesc, "sleep", false, INT8OID)));
+            elog(LOG, "row = %lu, oid = %i, sleep = %li", row, DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID)), DatumGetInt64(SPI_getbinval_my(val, tupdesc, "sleep", false, INT8OID)));
         }
     } while (SPI_processed);
     SPI_cursor_close_my(portal);
