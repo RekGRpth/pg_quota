@@ -2,8 +2,30 @@
 
 #include <limits.h>
 #include <miscadmin.h>
+#include <pgstat.h>
 #include <postmaster/bgworker.h>
+#include <utils/builtins.h>
 #include <utils/guc.h>
+#include <utils/ps_status.h>
+
+#if PG_VERSION_NUM >= 90500
+#define set_config_option_my(name, value, context, source, action, changeVal, elevel) set_config_option(name, value, context, source, action, changeVal, elevel, false)
+#else
+#define MyLatch (&MyProc->procLatch)
+#define set_config_option_my(name, value, context, source, action, changeVal, elevel) set_config_option(name, value, context, source, action, changeVal, elevel)
+#endif
+
+#if PG_VERSION_NUM >= 110000
+#define BackgroundWorkerInitializeConnectionMy(dbname, username) BackgroundWorkerInitializeConnection(dbname, username, 0)
+#else
+#define BackgroundWorkerInitializeConnectionMy(dbname, username) BackgroundWorkerInitializeConnection(dbname, username)
+#endif
+
+#if PG_VERSION_NUM >= 130000
+#define set_ps_display_my(activity) set_ps_display(activity)
+#else
+#define set_ps_display_my(activity) set_ps_display(activity, false)
+#endif
 
 PGDLLEXPORT void pg_quota_launcher(Datum arg);
 void _PG_init(void);
@@ -16,7 +38,7 @@ static void pg_quota_init(bool dynamic) {
     elog(DEBUG1, "dynamic = %s", dynamic ? "true" : "false");
     if ((len = strlcpy(worker.bgw_function_name, "pg_quota_launcher", sizeof(worker.bgw_function_name))) >= sizeof(worker.bgw_function_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_function_name))));
     if ((len = strlcpy(worker.bgw_library_name, "pg_quota", sizeof(worker.bgw_library_name))) >= sizeof(worker.bgw_library_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_library_name))));
-    if ((len = strlcpy(worker.bgw_name, "pg_quota launcher", sizeof(worker.bgw_name))) >= sizeof(worker.bgw_name)) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_name))));
+    if ((len = strlcpy(worker.bgw_name, "postgres pg_quota launcher", sizeof(worker.bgw_name))) >= sizeof(worker.bgw_name)) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_name))));
 #if PG_VERSION_NUM >= 110000
     if ((len = strlcpy(worker.bgw_type, worker.bgw_name, sizeof(worker.bgw_type))) >= sizeof(worker.bgw_type)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_type))));
 #endif
@@ -38,5 +60,12 @@ void _PG_init(void) {
 }
 
 void pg_quota_launcher(Datum arg) {
-
+    BackgroundWorkerUnblockSignals();
+    BackgroundWorkerInitializeConnectionMy("postgres", NULL);
+    set_config_option_my("application_name", "pg_quota", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
+    pgstat_report_appname("pg_quota");
+    set_ps_display_my("main");
+    process_session_preload_libraries();
+    if (!DatumGetBool(DirectFunctionCall2(pg_try_advisory_lock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) { elog(WARNING, "!pg_try_advisory_lock_int4(%i, %i)", MyDatabaseId, GetUserId()); return; }
+    if (!DatumGetBool(DirectFunctionCall2(pg_advisory_unlock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) elog(WARNING, "!pg_advisory_unlock_int4(%i, %i)", MyDatabaseId, GetUserId());
 }
