@@ -1,6 +1,9 @@
 #include <postgres.h>
 
 #include <access/xact.h>
+#ifdef GP_VERSION_NUM
+#include <cdb/cdbvars.h>
+#endif
 #include <commands/async.h>
 #include <executor/spi.h>
 #include <miscadmin.h>
@@ -79,6 +82,9 @@ void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+#ifdef GP_VERSION_NUM
+    if (!IS_QUERY_DISPATCHER()) return;
+#endif
     pg_quota_init(false);
 }
 
