@@ -18,7 +18,7 @@ PG_MODULE_MAGIC;
 static int launcher_fetch;
 static int launcher_restart;
 
-static void pg_quota_init(bool dynamic) {
+static void pg_quota_launcher_start(bool dynamic) {
     BackgroundWorker worker = {0};
     size_t len;
     elog(LOG, "dynamic = %s", dynamic ? "true" : "false");
@@ -46,7 +46,7 @@ void _PG_init(void) {
 #ifdef GP_VERSION_NUM
     if (!IS_QUERY_DISPATCHER()) return;
 #endif
-    pg_quota_init(false);
+    pg_quota_launcher_start(false);
 }
 
 void pg_quota_launcher(Datum arg) {
