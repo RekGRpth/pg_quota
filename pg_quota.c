@@ -24,6 +24,7 @@ typedef struct Worker {
 
 static int launcher_fetch;
 static int launcher_restart;
+static int worker_restart;
 
 static void pg_quota_launcher_start(bool dynamic) {
     BackgroundWorker worker = {0};
@@ -47,12 +48,37 @@ static void pg_quota_launcher_start(bool dynamic) {
 }
 
 static void pg_quota_worker_start(Worker *w) {
+    BackgroundWorkerHandle *handle;
+    BackgroundWorker worker = {0};
+    pid_t pid;
+    size_t len;
+    set_ps_display_my("work");
+    if ((len = strlcpy(worker.bgw_function_name, "pg_quota_worker", sizeof(worker.bgw_function_name))) >= sizeof(worker.bgw_function_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_function_name))));
+    if ((len = strlcpy(worker.bgw_library_name, "pg_quota", sizeof(worker.bgw_library_name))) >= sizeof(worker.bgw_library_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_library_name))));
+    if ((len = snprintf(worker.bgw_name, sizeof(worker.bgw_name) - 1, "%s %s pg_quota worker", w->user, w->data)) >= sizeof(worker.bgw_name) - 1) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("snprintf %li >= %li", len, sizeof(worker.bgw_name) - 1)));
+#if PG_VERSION_NUM >= 110000
+    if ((len = strlcpy(worker.bgw_type, worker.bgw_name, sizeof(worker.bgw_type))) >= sizeof(worker.bgw_type)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_type))));
+#endif
+    worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+    worker.bgw_main_arg = ObjectIdGetDatum(w->oid);
+    worker.bgw_notify_pid = MyProcPid;
+    worker.bgw_restart_time = worker_restart;
+    worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+    if (!RegisterDynamicBackgroundWorker(&worker, &handle)) ereport(ERROR, (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED), errmsg("could not register background worker"), errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
+    switch (WaitForBackgroundWorkerStartup(handle, &pid)) {
+        case BGWH_NOT_YET_STARTED: ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("BGWH_NOT_YET_STARTED is never returned!"))); break;
+        case BGWH_POSTMASTER_DIED: ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("cannot start background worker without postmaster"), errhint("Kill all remaining database processes and restart the database."))); break;
+        case BGWH_STARTED: elog(LOG, "started"); break;
+        case BGWH_STOPPED: ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background worker"), errhint("More details may be available in the server log."))); break;
+    }
+    if (handle) pfree(handle);
 }
 
 void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
 #ifdef GP_VERSION_NUM
     if (!IS_QUERY_DISPATCHER()) return;
 #endif
