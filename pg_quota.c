@@ -5,6 +5,7 @@
 #include <postmaster/bgworker.h>
 #include <utils/guc.h>
 
+PGDLLEXPORT void pg_quota_launcher_main(Datum main_arg);
 void _PG_init(void);
 
 static int pg_quota_launcher_main_restart;
@@ -15,7 +16,7 @@ static void pg_quota_init(bool dynamic) {
     elog(DEBUG1, "dynamic = %s", dynamic ? "true" : "false");
     if ((len = strlcpy(worker.bgw_function_name, "pg_quota_launcher_main", sizeof(worker.bgw_function_name))) >= sizeof(worker.bgw_function_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_function_name))));
     if ((len = strlcpy(worker.bgw_library_name, "pg_quota", sizeof(worker.bgw_library_name))) >= sizeof(worker.bgw_library_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_library_name))));
-    if ((len = strlcpy(worker.bgw_name, "pg_quota", sizeof(worker.bgw_name))) >= sizeof(worker.bgw_name)) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_name))));
+    if ((len = strlcpy(worker.bgw_name, "pg_quota launcher", sizeof(worker.bgw_name))) >= sizeof(worker.bgw_name)) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_name))));
 #if PG_VERSION_NUM >= 110000
     if ((len = strlcpy(worker.bgw_type, worker.bgw_name, sizeof(worker.bgw_type))) >= sizeof(worker.bgw_type)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_type))));
 #endif
@@ -34,4 +35,8 @@ void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
     DefineCustomIntVariable("pg_quota.launcher_main_restart", "pg_quota launcher main restart", "Restart launcher main interval, seconds", &pg_quota_launcher_main_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     pg_quota_init(false);
+}
+
+void pg_quota_launcher_main(Datum main_arg) {
+
 }
