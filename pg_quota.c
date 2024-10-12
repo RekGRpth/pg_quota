@@ -74,6 +74,29 @@ static void pg_quota_worker_start(Worker *w) {
     if (handle) pfree(handle);
 }
 
+/*
+ * Connect background worker to a database using OIDs.
+ */
+void
+BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid)
+{
+	BackgroundWorker *worker = MyBgworkerEntry;
+
+	/* XXX is this the right errcode? */
+	if (!(worker->bgw_flags & BGWORKER_BACKEND_DATABASE_CONNECTION))
+		ereport(FATAL,
+				(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
+				 errmsg("database connection requirement not indicated during registration")));
+
+	InitPostgres(NULL, dboid, NULL, NULL);
+
+	/* it had better not gotten out of "init" mode yet */
+	if (!IsInitProcessingMode())
+		ereport(ERROR,
+				(errmsg("invalid processing mode in background worker")));
+	SetProcessingMode(NormalProcessing);
+}
+
 void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
@@ -93,8 +116,8 @@ void pg_quota_launcher(Datum arg) {
 #endif
     BackgroundWorkerUnblockSignals();
     BackgroundWorkerInitializeConnectionMy("postgres", NULL);
-    set_config_option_my("application_name", "pg_quota", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
-    pgstat_report_appname("pg_quota");
+    set_config_option_my("application_name", "pg_quota launcher", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
+    pgstat_report_appname("pg_quota launcher");
     set_ps_display_my("main");
     process_session_preload_libraries();
     if (!DatumGetBool(DirectFunctionCall2(pg_try_advisory_lock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) { elog(WARNING, "!pg_try_advisory_lock_int4(%i, %i)", MyDatabaseId, GetUserId()); return; }
@@ -135,6 +158,26 @@ void pg_quota_launcher(Datum arg) {
     SPI_cursor_close_my(portal);
     SPI_finish_my();
     pfree(src.data);
+    set_ps_display_my("idle");
+    if (!DatumGetBool(DirectFunctionCall2(pg_advisory_unlock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) elog(WARNING, "!pg_advisory_unlock_int4(%i, %i)", MyDatabaseId, GetUserId());
+}
+
+void pg_quota_worker(Datum arg) {
+    Oid oid = DatumGetObjectId(arg);
+#ifdef GP_VERSION_NUM
+    Gp_role = GP_ROLE_UTILITY;
+#if PG_VERSION_NUM < 120000
+    Gp_session_role = GP_ROLE_UTILITY;
+#endif
+#endif
+    BackgroundWorkerUnblockSignals();
+    BackgroundWorkerInitializeConnectionByOidMy(oid, InvalidOid);
+    set_config_option_my("application_name", "pg_quota worker", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
+    pgstat_report_appname("pg_quota worker");
+    set_ps_display_my("main");
+    process_session_preload_libraries();
+    if (!DatumGetBool(DirectFunctionCall2(pg_try_advisory_lock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) { elog(WARNING, "!pg_try_advisory_lock_int4(%i, %i)", MyDatabaseId, GetUserId()); return; }
+    elog(LOG, "oid = %i", oid);
     set_ps_display_my("idle");
     if (!DatumGetBool(DirectFunctionCall2(pg_advisory_unlock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) elog(WARNING, "!pg_advisory_unlock_int4(%i, %i)", MyDatabaseId, GetUserId());
 }

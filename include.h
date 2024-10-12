@@ -27,8 +27,11 @@
 
 #if PG_VERSION_NUM >= 110000
 #define BackgroundWorkerInitializeConnectionMy(dbname, username) BackgroundWorkerInitializeConnection(dbname, username, 0)
+#define BackgroundWorkerInitializeConnectionByOidMy(dboid, useroid) BackgroundWorkerInitializeConnectionByOid(dboid, useroid, 0)
 #else
 #define BackgroundWorkerInitializeConnectionMy(dbname, username) BackgroundWorkerInitializeConnection(dbname, username)
+#define BackgroundWorkerInitializeConnectionByOidMy(dboid, useroid) BackgroundWorkerInitializeConnectionByOid(dboid, useroid)
+extern void BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid);
 #endif
 
 #if PG_VERSION_NUM >= 130000
@@ -39,6 +42,7 @@
 
 Datum SPI_getbinval_my(HeapTuple tuple, TupleDesc tupdesc, const char *fname, bool allow_null, Oid typeid);
 PGDLLEXPORT void pg_quota_launcher(Datum arg);
+PGDLLEXPORT void pg_quota_worker(Datum arg);
 Portal SPI_cursor_open_my(const char *src, SPIPlanPtr plan, Datum *values, const char *nulls, bool read_only);
 Portal SPI_cursor_open_with_args_my(const char *src, int nargs, Oid *argtypes, Datum *values, const char *nulls, bool read_only);
 SPIPlanPtr SPI_prepare_my(const char *src, int nargs, Oid *argtypes);
