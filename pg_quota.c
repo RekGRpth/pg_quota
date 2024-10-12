@@ -79,15 +79,18 @@ void _PG_init(void) {
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
-#ifdef GP_VERSION_NUM
-    if (!IS_QUERY_DISPATCHER()) return;
-#endif
     pg_quota_launcher_start(false);
 }
 
 void pg_quota_launcher(Datum arg) {
     Portal portal;
     StringInfoData src;
+#ifdef GP_VERSION_NUM
+    Gp_role = GP_ROLE_UTILITY;
+#if PG_VERSION_NUM < 120000
+    Gp_session_role = GP_ROLE_UTILITY;
+#endif
+#endif
     BackgroundWorkerUnblockSignals();
     BackgroundWorkerInitializeConnectionMy("postgres", NULL);
     set_config_option_my("application_name", "pg_quota", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
