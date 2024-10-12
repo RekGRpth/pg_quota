@@ -166,6 +166,7 @@ void pg_quota_launcher(Datum arg) {
 
 void pg_quota_worker(Datum arg) {
     Oid oid = DatumGetObjectId(arg);
+    int64 sleep;
 #ifdef GP_VERSION_NUM
     Gp_role = GP_ROLE_UTILITY;
 #if PG_VERSION_NUM < 120000
@@ -179,7 +180,8 @@ void pg_quota_worker(Datum arg) {
     set_ps_display_my("main");
     process_session_preload_libraries();
     if (!DatumGetBool(DirectFunctionCall2(pg_try_advisory_lock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) { elog(WARNING, "!pg_try_advisory_lock_int4(%i, %i)", MyDatabaseId, GetUserId()); return; }
-    elog(LOG, "oid = %i", oid);
+    sleep = atoll(GetConfigOption("pg_quota.sleep", false, true));
+    elog(LOG, "oid = %i, sleep = %li", oid, sleep);
     set_ps_display_my("idle");
     if (!DatumGetBool(DirectFunctionCall2(pg_advisory_unlock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) elog(WARNING, "!pg_advisory_unlock_int4(%i, %i)", MyDatabaseId, GetUserId());
 }
