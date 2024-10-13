@@ -6,6 +6,9 @@
 #endif
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
+#if PG_VERSION_NUM < 130000
+#include <signal.h>
+#endif
 #include <storage/ipc.h>
 #include <storage/proc.h>
 #include <tcop/utility.h>
@@ -18,13 +21,16 @@ PG_MODULE_MAGIC;
 typedef struct Worker {
     char data[NAMEDATALEN];
     char user[NAMEDATALEN];
-    int64 sleep;
+    int64 timeout;
     Oid oid;
 } Worker;
 
 static int launcher_fetch;
 static int launcher_restart;
 static int worker_restart;
+#if PG_VERSION_NUM < 130000
+volatile sig_atomic_t ShutdownRequestPending = false;
+#endif
 
 static void pg_quota_launcher_start(bool dynamic) {
     BackgroundWorker worker = {0};
@@ -72,6 +78,21 @@ static void pg_quota_worker_start(Worker *w) {
         case BGWH_STOPPED: ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background worker"), errhint("More details may be available in the server log."))); break;
     }
     if (handle) pfree(handle);
+}
+
+static void pg_quota_reload(void) {
+    ConfigReloadPending = false;
+    ProcessConfigFile(PGC_SIGHUP);
+}
+
+static void pg_quota_latch(void) {
+    ResetLatch(MyLatch);
+    CHECK_FOR_INTERRUPTS();
+    if (ConfigReloadPending) pg_quota_reload();
+}
+
+static void pg_quota_timeout(void) {
+    elog(LOG, "ShutdownRequestPending = %s", ShutdownRequestPending ? "true" : "false");
 }
 
 #if PG_VERSION_NUM < 110000
@@ -129,7 +150,7 @@ void pg_quota_launcher(Datum arg) {
             WITH _ AS (
                 SELECT "setdatabase", regexp_split_to_array(UNNEST("setconfig"), '=') AS "setconfig" FROM "pg_db_role_setting"
             ) SELECT "setdatabase", %s(array_agg("setconfig"[1]), array_agg("setconfig"[2])) AS "setconfig" FROM _ GROUP BY 1
-        ) SELECT "setdatabase", "datname"::text AS "data", "rolname"::text AS "user", ("setconfig"->>'pg_quota.sleep')::bigint AS "sleep"
+        ) SELECT "setdatabase", "datname"::text AS "data", "rolname"::text AS "user", ("setconfig"->>'pg_quota.timeout')::bigint AS "timeout"
         FROM _ INNER JOIN "pg_database" ON "pg_database"."oid" = "setdatabase" INNER JOIN "pg_roles" ON "pg_roles"."oid" = "datdba"
         LEFT JOIN "pg_locks" ON "locktype" = 'userlock' AND "mode" = 'AccessExclusiveLock' AND "granted" AND "objsubid" = 2 AND "database" = "setdatabase" AND "classid" = "setdatabase" AND "objid" = "datdba"
         WHERE "pid" IS NULL
@@ -149,11 +170,11 @@ void pg_quota_launcher(Datum arg) {
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
             Worker w = {0};
             set_ps_display_my("row");
-            w.sleep = DatumGetInt64(SPI_getbinval_my(val, tupdesc, "sleep", false, INT8OID));
             w.oid = DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID));
+            w.timeout = DatumGetInt64(SPI_getbinval_my(val, tupdesc, "timeout", false, INT8OID));
             text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "data", false, TEXTOID)), w.data, sizeof(w.data));
             text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "user", false, TEXTOID)), w.user, sizeof(w.user));
-            elog(LOG, "row = %lu, user = %s, data = %s, oid = %i, sleep = %li", row, w.user, w.data, w.oid, w.sleep);
+            elog(LOG, "row = %lu, user = %s, data = %s, oid = %i, timeout = %li", row, w.user, w.data, w.oid, w.timeout);
             pg_quota_worker_start(&w);
         }
     } while (SPI_processed);
@@ -165,8 +186,11 @@ void pg_quota_launcher(Datum arg) {
 }
 
 void pg_quota_worker(Datum arg) {
+    instr_time current_time_timeout;
+    instr_time start_time_timeout;
+    int64 timeout;
+    long current_timeout = -1;
     Oid oid = DatumGetObjectId(arg);
-    int64 sleep;
 #ifdef GP_VERSION_NUM
     Gp_role = GP_ROLE_UTILITY;
 #if PG_VERSION_NUM < 120000
@@ -180,8 +204,21 @@ void pg_quota_worker(Datum arg) {
     set_ps_display_my("main");
     process_session_preload_libraries();
     if (!DatumGetBool(DirectFunctionCall2(pg_try_advisory_lock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) { elog(WARNING, "!pg_try_advisory_lock_int4(%i, %i)", MyDatabaseId, GetUserId()); return; }
-    sleep = atoll(GetConfigOption("pg_quota.sleep", false, true));
-    elog(LOG, "oid = %i, sleep = %li", oid, sleep);
+    timeout = atoll(GetConfigOption("pg_quota.timeout", false, true));
+    elog(LOG, "oid = %i, timeout = %li", oid, timeout);
     set_ps_display_my("idle");
+    while (!ShutdownRequestPending) {
+        if (current_timeout <= 0) {
+            INSTR_TIME_SET_CURRENT(start_time_timeout);
+            current_timeout = timeout;
+        }
+        int rc = WaitLatchMy(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, timeout);
+        if (rc & WL_POSTMASTER_DEATH) ShutdownRequestPending = true;
+        if (rc & WL_LATCH_SET) pg_quota_latch();
+        INSTR_TIME_SET_CURRENT(current_time_timeout);
+        INSTR_TIME_SUBTRACT(current_time_timeout, start_time_timeout);
+        current_timeout = timeout - (long)INSTR_TIME_GET_MILLISEC(current_time_timeout);
+        if (current_timeout <= 0) pg_quota_timeout();
+    }
     if (!DatumGetBool(DirectFunctionCall2(pg_advisory_unlock_int4, Int32GetDatum(MyDatabaseId), Int32GetDatum(GetUserId())))) elog(WARNING, "!pg_advisory_unlock_int4(%i, %i)", MyDatabaseId, GetUserId());
 }

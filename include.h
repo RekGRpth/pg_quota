@@ -25,6 +25,27 @@
 #define set_config_option_my(name, value, context, source, action, changeVal, elevel) set_config_option(name, value, context, source, action, changeVal, elevel)
 #endif
 
+#if PG_VERSION_NUM >= 100000
+#define createdb_my(pstate, stmt) createdb(pstate, stmt)
+#define CreateRoleMy(pstate, stmt) CreateRole(pstate, stmt)
+#define makeDefElemMy(name, arg) makeDefElem(name, arg, -1)
+#define shm_toc_lookup_my(toc, key) shm_toc_lookup(toc, key, false)
+#define WaitEventSetWaitMy(set, timeout, occurred_events, nevents) WaitEventSetWait(set, timeout, occurred_events, nevents, PG_WAIT_EXTENSION)
+#define WaitLatchMy(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout, PG_WAIT_EXTENSION)
+#else
+#define createdb_my(pstate, stmt) createdb(stmt)
+#define CreateRoleMy(pstate, stmt) CreateRole(stmt)
+#define makeDefElemMy(name, arg) makeDefElem(name, arg)
+#ifdef GP_VERSION_NUM
+#define shm_toc_lookup_my(toc, key) shm_toc_lookup(toc, key, false)
+#else
+#define shm_toc_lookup_my(toc, key) shm_toc_lookup(toc, key)
+#endif
+#define WL_SOCKET_MASK (WL_SOCKET_READABLE | WL_SOCKET_WRITEABLE)
+#define WaitEventSetWaitMy(set, timeout, occurred_events, nevents) WaitEventSetWait(set, timeout, occurred_events, nevents)
+#define WaitLatchMy(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout)
+#endif
+
 #if PG_VERSION_NUM >= 110000
 #define BackgroundWorkerInitializeConnectionMy(dbname, username) BackgroundWorkerInitializeConnection(dbname, username, 0)
 #define BackgroundWorkerInitializeConnectionByOidMy(dboid, useroid) BackgroundWorkerInitializeConnectionByOid(dboid, useroid, 0)
