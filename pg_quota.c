@@ -1,5 +1,6 @@
 #include "include.h"
 
+#include <catalog/objectaccess.h>
 #include <executor/executor.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
@@ -26,9 +27,14 @@ typedef struct Worker {
 } Worker;
 
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
+static file_create_hook_type prev_file_create_hook;
+static file_extend_hook_type prev_file_extend_hook;
+static file_truncate_hook_type prev_file_truncate_hook;
+static file_unlink_hook_type prev_file_unlink_hook;
 static int launcher_fetch;
 static int launcher_restart;
 static int worker_restart;
+static object_access_hook_type prev_object_access_hook;
 
 #if PG_VERSION_NUM < 130000
 static volatile sig_atomic_t ShutdownRequestPending = false;
@@ -113,6 +119,26 @@ static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_v
     return true;
 }
 
+static void pg_quota_file_create_hook(RelFileNodeBackend rnode) {
+    if (prev_file_create_hook) prev_file_create_hook(rnode);
+}
+
+static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
+    if (prev_file_extend_hook) prev_file_extend_hook(rnode);
+}
+
+static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
+    if (prev_file_truncate_hook) prev_file_truncate_hook(rnode);
+}
+
+static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
+    if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
+}
+
+static void pg_quota_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg) {
+    if (prev_object_access_hook) prev_object_access_hook(access, classId, objectId, subId, arg);
+}
+
 #if PG_VERSION_NUM < 110000
 /*
  * Connect background worker to a database using OIDs.
@@ -143,8 +169,12 @@ void _PG_init(void) {
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
-    prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook;
-    ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
+    prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook; ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
+    prev_file_create_hook = file_create_hook; file_create_hook = pg_quota_file_create_hook;
+    prev_file_extend_hook = file_extend_hook; file_extend_hook = pg_quota_file_extend_hook;
+    prev_file_truncate_hook = file_truncate_hook; file_truncate_hook = pg_quota_file_truncate_hook;
+    prev_file_unlink_hook = file_unlink_hook; file_unlink_hook = pg_quota_file_unlink_hook;
+    prev_object_access_hook = object_access_hook; object_access_hook = pg_quota_object_access_hook;
     pg_quota_launcher_start(false);
 }
 
