@@ -19,12 +19,12 @@
 
 PG_MODULE_MAGIC;
 
-typedef struct Worker {
+typedef struct PgQuotaWorker {
     char data[NAMEDATALEN];
     char user[NAMEDATALEN];
     int64 timeout;
     Oid oid;
-} Worker;
+} PgQuotaWorker;
 
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
 static file_create_hook_type prev_file_create_hook;
@@ -102,7 +102,7 @@ static void pg_quota_object_access_hook(ObjectAccessType access, Oid classId, Oi
     if (prev_object_access_hook) prev_object_access_hook(access, classId, objectId, subId, arg);
 }
 
-static void pg_quota_worker_start(Worker *w) {
+static void pg_quota_worker_start(PgQuotaWorker *w) {
     BackgroundWorkerHandle *handle;
     BackgroundWorker worker = {0};
     pid_t pid;
@@ -248,7 +248,7 @@ void pg_quota_launcher(Datum arg) {
         for (uint64 row = 0; row < SPI_processed; row++) {
             HeapTuple val = SPI_tuptable->vals[row];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
-            Worker w = {0};
+            PgQuotaWorker w = {0};
             set_ps_display_my("row");
             w.oid = DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID));
             w.timeout = DatumGetInt64(SPI_getbinval_my(val, tupdesc, "timeout", false, INT8OID));
