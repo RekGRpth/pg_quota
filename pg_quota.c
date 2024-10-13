@@ -35,6 +35,10 @@ static int launcher_fetch;
 static int launcher_restart;
 static int worker_restart;
 static object_access_hook_type prev_object_access_hook;
+static shmem_startup_hook_type prev_shmem_startup_hook;
+#if PG_VERSION_NUM >= 150000
+static shmem_request_hook_type prev_shmem_request_hook;
+#endif
 
 #if PG_VERSION_NUM < 130000
 static volatile sig_atomic_t ShutdownRequestPending = false;
@@ -139,6 +143,18 @@ static void pg_quota_timeout(void) {
     elog(LOG, "ShutdownRequestPending = %s", ShutdownRequestPending ? "true" : "false");
 }
 
+#if PG_VERSION_NUM >= 150000
+static void pg_quota_shmem_request_hook(void) {
+    if (prev_shmem_request_hook) prev_shmem_request_hook();
+}
+#endif
+
+static void pg_quota_shmem_startup_hook(void) {
+    if (prev_shmem_startup_hook) prev_shmem_startup_hook();
+    LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+    LWLockRelease(AddinShmemInitLock);
+}
+
 #if PG_VERSION_NUM < 110000
 /*
  * Connect background worker to a database using OIDs.
@@ -176,6 +192,13 @@ void _PG_init(void) {
     prev_file_truncate_hook = file_truncate_hook; file_truncate_hook = pg_quota_file_truncate_hook;
     prev_file_unlink_hook = file_unlink_hook; file_unlink_hook = pg_quota_file_unlink_hook;
     prev_object_access_hook = object_access_hook; object_access_hook = pg_quota_object_access_hook;
+    prev_shmem_startup_hook = shmem_startup_hook; shmem_startup_hook = pg_quota_shmem_startup_hook;
+#if PG_VERSION_NUM >= 150000
+    prev_shmem_request_hook = shmem_request_hook; shmem_request_hook = pg_quota_shmem_request_hook;
+#elif PG_VERSION_NUM >= 90600
+    RequestAddinShmemSpace(init_taskshared_memsize());
+    RequestAddinShmemSpace(init_workshared_memsize());
+#endif
     pg_quota_launcher_start(false);
 }
 
