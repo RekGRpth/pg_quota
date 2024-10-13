@@ -20,8 +20,8 @@
 PG_MODULE_MAGIC;
 
 typedef struct PgQuotaWorker {
-    char data[NAMEDATALEN];
-    char user[NAMEDATALEN];
+    char datname[NAMEDATALEN];
+    char rolname[NAMEDATALEN];
     int64 timeout;
     Oid oid;
 } PgQuotaWorker;
@@ -110,7 +110,7 @@ static void pg_quota_worker_start(PgQuotaWorker *w) {
     set_ps_display_my("work");
     if ((len = strlcpy(worker.bgw_function_name, "pg_quota_worker", sizeof(worker.bgw_function_name))) >= sizeof(worker.bgw_function_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_function_name))));
     if ((len = strlcpy(worker.bgw_library_name, "pg_quota", sizeof(worker.bgw_library_name))) >= sizeof(worker.bgw_library_name)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_library_name))));
-    if ((len = snprintf(worker.bgw_name, sizeof(worker.bgw_name) - 1, "%s %s pg_quota worker", w->user, w->data)) >= sizeof(worker.bgw_name) - 1) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("snprintf %li >= %li", len, sizeof(worker.bgw_name) - 1)));
+    if ((len = snprintf(worker.bgw_name, sizeof(worker.bgw_name) - 1, "%s %s pg_quota worker", w->rolname, w->datname)) >= sizeof(worker.bgw_name) - 1) ereport(WARNING, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("snprintf %li >= %li", len, sizeof(worker.bgw_name) - 1)));
 #if PG_VERSION_NUM >= 110000
     if ((len = strlcpy(worker.bgw_type, worker.bgw_name, sizeof(worker.bgw_type))) >= sizeof(worker.bgw_type)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_type))));
 #endif
@@ -230,7 +230,7 @@ void pg_quota_launcher(Datum arg) {
             WITH _ AS (
                 SELECT "setdatabase", regexp_split_to_array(UNNEST("setconfig"), '=') AS "setconfig" FROM "pg_db_role_setting"
             ) SELECT "setdatabase", %s(array_agg("setconfig"[1]), array_agg("setconfig"[2])) AS "setconfig" FROM _ GROUP BY 1
-        ) SELECT "setdatabase", "datname"::text AS "data", "rolname"::text AS "user", ("setconfig"->>'pg_quota.timeout')::bigint AS "timeout"
+        ) SELECT "setdatabase", "datname"::text, "rolname"::text, ("setconfig"->>'pg_quota.timeout')::bigint AS "timeout"
         FROM _ INNER JOIN "pg_database" ON "pg_database"."oid" = "setdatabase" INNER JOIN "pg_roles" ON "pg_roles"."oid" = "datdba"
         LEFT JOIN "pg_locks" ON "locktype" = 'userlock' AND "mode" = 'AccessExclusiveLock' AND "granted" AND "objsubid" = 2 AND "database" = "setdatabase" AND "classid" = "setdatabase" AND "objid" = "datdba"
         WHERE "pid" IS NULL
@@ -252,9 +252,9 @@ void pg_quota_launcher(Datum arg) {
             set_ps_display_my("row");
             w.oid = DatumGetObjectId(SPI_getbinval_my(val, tupdesc, "setdatabase", false, OIDOID));
             w.timeout = DatumGetInt64(SPI_getbinval_my(val, tupdesc, "timeout", false, INT8OID));
-            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "data", false, TEXTOID)), w.data, sizeof(w.data));
-            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "user", false, TEXTOID)), w.user, sizeof(w.user));
-            elog(LOG, "row = %lu, user = %s, data = %s, oid = %i, timeout = %li", row, w.user, w.data, w.oid, w.timeout);
+            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "datname", false, TEXTOID)), w.datname, sizeof(w.datname));
+            text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "rolname", false, TEXTOID)), w.rolname, sizeof(w.rolname));
+            elog(LOG, "row = %lu, rolname = %s, datname = %s, oid = %i, timeout = %li", row, w.rolname, w.datname, w.oid, w.timeout);
             pg_quota_worker_start(&w);
         }
     } while (SPI_processed);
