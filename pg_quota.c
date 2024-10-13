@@ -28,8 +28,20 @@ typedef struct Worker {
 static int launcher_fetch;
 static int launcher_restart;
 static int worker_restart;
+
 #if PG_VERSION_NUM < 130000
-volatile sig_atomic_t ShutdownRequestPending = false;
+static volatile sig_atomic_t ShutdownRequestPending = false;
+
+static void
+SignalHandlerForConfigReload(SIGNAL_ARGS)
+{
+	int			save_errno = errno;
+
+	ConfigReloadPending = true;
+	SetLatch(MyLatch);
+
+	errno = save_errno;
+}
 #endif
 
 static void pg_quota_launcher_start(bool dynamic) {
@@ -197,6 +209,7 @@ void pg_quota_worker(Datum arg) {
     Gp_session_role = GP_ROLE_UTILITY;
 #endif
 #endif
+    pqsignal(SIGHUP, SignalHandlerForConfigReload);
     BackgroundWorkerUnblockSignals();
     BackgroundWorkerInitializeConnectionByOidMy(oid, InvalidOid);
     set_config_option_my("application_name", "pg_quota worker", PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SET, true, ERROR);
