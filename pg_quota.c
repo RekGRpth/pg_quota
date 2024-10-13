@@ -33,6 +33,7 @@ static file_truncate_hook_type prev_file_truncate_hook;
 static file_unlink_hook_type prev_file_unlink_hook;
 static int launcher_fetch;
 static int launcher_restart;
+static int max_active_tables;
 static int worker_restart;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
@@ -152,6 +153,10 @@ static void pg_quota_shmem_request_hook(void) {
 static void pg_quota_shmem_startup_hook(void) {
     if (prev_shmem_startup_hook) prev_shmem_startup_hook();
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
+    {
+        HASHCTL ctl = {0};
+        //active_tables_map = ShmemInitHashMy("pg_quota_active_tables", max_active_tables, max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+    }
     LWLockRelease(AddinShmemInitLock);
 }
 
@@ -184,6 +189,7 @@ void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.max_active_tables", "pg_quota max active tables", "Max number of active tables monitored by pg_quota.", &max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     if (IsRoleMirror()) return;
     prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook; ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
