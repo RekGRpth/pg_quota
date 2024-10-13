@@ -51,6 +51,27 @@ SignalHandlerForConfigReload(SIGNAL_ARGS)
 }
 #endif
 
+static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
+    if (prev_ExecutorCheckPerms_hook) return prev_ExecutorCheckPerms_hook(rangeTable, ereport_on_violation);
+    return true;
+}
+
+static void pg_quota_file_create_hook(RelFileNodeBackend rnode) {
+    if (prev_file_create_hook) prev_file_create_hook(rnode);
+}
+
+static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
+    if (prev_file_extend_hook) prev_file_extend_hook(rnode);
+}
+
+static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
+    if (prev_file_truncate_hook) prev_file_truncate_hook(rnode);
+}
+
+static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
+    if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
+}
+
 static void pg_quota_launcher_start(bool dynamic) {
     BackgroundWorker worker = {0};
     size_t len;
@@ -70,6 +91,10 @@ static void pg_quota_launcher_start(bool dynamic) {
         if (!RegisterDynamicBackgroundWorker(&worker, NULL)) ereport(ERROR, (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED), errmsg("could not register background worker"), errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
         IsUnderPostmaster = false;
     } else RegisterBackgroundWorker(&worker);
+}
+
+static void pg_quota_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg) {
+    if (prev_object_access_hook) prev_object_access_hook(access, classId, objectId, subId, arg);
 }
 
 static void pg_quota_worker_start(Worker *w) {
@@ -112,31 +137,6 @@ static void pg_quota_latch(void) {
 
 static void pg_quota_timeout(void) {
     elog(LOG, "ShutdownRequestPending = %s", ShutdownRequestPending ? "true" : "false");
-}
-
-static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
-    if (prev_ExecutorCheckPerms_hook) return prev_ExecutorCheckPerms_hook(rangeTable, ereport_on_violation);
-    return true;
-}
-
-static void pg_quota_file_create_hook(RelFileNodeBackend rnode) {
-    if (prev_file_create_hook) prev_file_create_hook(rnode);
-}
-
-static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
-    if (prev_file_extend_hook) prev_file_extend_hook(rnode);
-}
-
-static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
-    if (prev_file_truncate_hook) prev_file_truncate_hook(rnode);
-}
-
-static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
-    if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
-}
-
-static void pg_quota_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg) {
-    if (prev_object_access_hook) prev_object_access_hook(access, classId, objectId, subId, arg);
 }
 
 #if PG_VERSION_NUM < 110000
