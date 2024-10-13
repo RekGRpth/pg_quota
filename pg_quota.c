@@ -31,10 +31,10 @@ static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
 static file_truncate_hook_type prev_file_truncate_hook;
 static file_unlink_hook_type prev_file_unlink_hook;
-static int launcher_fetch;
-static int launcher_restart;
-static int max_active_tables;
-static int worker_restart;
+static int pg_quota_launcher_fetch;
+static int pg_quota_launcher_restart;
+static int pg_quota_max_active_tables;
+static int pg_quota_worker_restart;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
 #if PG_VERSION_NUM >= 150000
@@ -88,7 +88,7 @@ static void pg_quota_launcher_start(bool dynamic) {
     if ((len = strlcpy(worker.bgw_type, worker.bgw_name, sizeof(worker.bgw_type))) >= sizeof(worker.bgw_type)) ereport(ERROR, (errcode(ERRCODE_OUT_OF_MEMORY), errmsg("strlcpy %li >= %li", len, sizeof(worker.bgw_type))));
 #endif
     worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
-    worker.bgw_restart_time = launcher_restart;
+    worker.bgw_restart_time = pg_quota_launcher_restart;
     worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
     if (dynamic) {
         worker.bgw_notify_pid = MyProcPid;
@@ -117,7 +117,7 @@ static void pg_quota_worker_start(Worker *w) {
     worker.bgw_flags = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
     worker.bgw_main_arg = ObjectIdGetDatum(w->oid);
     worker.bgw_notify_pid = MyProcPid;
-    worker.bgw_restart_time = worker_restart;
+    worker.bgw_restart_time = pg_quota_worker_restart;
     worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
     if (!RegisterDynamicBackgroundWorker(&worker, &handle)) ereport(ERROR, (errcode(ERRCODE_CONFIGURATION_LIMIT_EXCEEDED), errmsg("could not register background worker"), errhint("Consider increasing configuration parameter \"max_worker_processes\".")));
     switch (WaitForBackgroundWorkerStartup(handle, &pid)) {
@@ -155,7 +155,7 @@ static void pg_quota_shmem_startup_hook(void) {
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
     {
         HASHCTL ctl = {0};
-        //active_tables_map = ShmemInitHashMy("pg_quota_active_tables", max_active_tables, max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+        //active_tables_map = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     }
     LWLockRelease(AddinShmemInitLock);
 }
@@ -187,10 +187,10 @@ BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid)
 
 void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
-    DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pg_quota.max_active_tables", "pg_quota max active tables", "Max number of active tables monitored by pg_quota.", &max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
-    DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &pg_quota_launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &pg_quota_launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.max_active_tables", "pg_quota max active tables", "Max number of active tables monitored by pg_quota.", &pg_quota_max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &pg_quota_worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     if (IsRoleMirror()) return;
     prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook; ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
     prev_file_create_hook = file_create_hook; file_create_hook = pg_quota_file_create_hook;
@@ -244,7 +244,7 @@ void pg_quota_launcher(Datum arg) {
     SPI_connect_my(src.data);
     portal = SPI_cursor_open_with_args_my(src.data, 0, NULL, NULL, NULL, true);
     do {
-        SPI_cursor_fetch(portal, true, launcher_fetch);
+        SPI_cursor_fetch(portal, true, pg_quota_launcher_fetch);
         for (uint64 row = 0; row < SPI_processed; row++) {
             HeapTuple val = SPI_tuptable->vals[row];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
