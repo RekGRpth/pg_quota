@@ -169,6 +169,7 @@ void _PG_init(void) {
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
+    if (IsRoleMirror()) return;
     prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook; ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
     prev_file_create_hook = file_create_hook; file_create_hook = pg_quota_file_create_hook;
     prev_file_extend_hook = file_extend_hook; file_extend_hook = pg_quota_file_extend_hook;
