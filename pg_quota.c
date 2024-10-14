@@ -75,6 +75,7 @@ static void pg_quota_active_table_append(const RelFileNodeBackend *relFileNode) 
         .relfilenode = relFileNode->node.relNode,
         .tablespaceoid = relFileNode->node.spcNode,
     };
+    elog(LOG, "append: dbid = %i, relfilenode = %i, tablespaceoid = %i", entry.dbid, entry.relfilenode, entry.tablespaceoid);
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     (void)hash_search(pg_quota_active_tables, &entry, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
     LWLockRelease(pg_quota_active_table_lock);
@@ -88,6 +89,7 @@ static void pg_quota_active_table_remove(const RelFileNodeBackend *relFileNode) 
         .relfilenode = relFileNode->node.relNode,
         .tablespaceoid = relFileNode->node.spcNode,
     };
+    elog(LOG, "remove: dbid = %i, relfilenode = %i, tablespaceoid = %i", entry.dbid, entry.relfilenode, entry.tablespaceoid);
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     (void)hash_search(pg_quota_active_tables, &entry, HASH_REMOVE, &found);
     LWLockRelease(pg_quota_active_table_lock);
@@ -115,7 +117,7 @@ static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
 }
 
 static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
-    if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
+    if (prev_file_unlink_hook) prev_file_unlink_hook(rnode);
     pg_quota_active_table_remove(&rnode);
 }
 
