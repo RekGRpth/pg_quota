@@ -26,12 +26,6 @@ typedef struct PgQuotaWorker {
     Oid oid;
 } PgQuotaWorker;
 
-typedef struct PgQuotaActiveTableFileEntry {
-    Oid dbid;
-    Oid relfilenode;
-    Oid tablespaceoid;
-} PgQuotaActiveTableFileEntry;
-
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
 static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
@@ -64,34 +58,24 @@ SignalHandlerForConfigReload(SIGNAL_ARGS)
 static Size PgQuotaShmemSize(void)
 {
     Size size = 0;
-    size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(PgQuotaActiveTableFileEntry)));
+    size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(RelFileNode)));
     return size;
 }
 
 static void pg_quota_active_table_append(const RelFileNodeBackend *relFileNode) {
     bool found;
-    PgQuotaActiveTableFileEntry entry = {
-        .dbid = relFileNode->node.dbNode,
-        .relfilenode = relFileNode->node.relNode,
-        .tablespaceoid = relFileNode->node.spcNode,
-    };
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
-    (void)hash_search(pg_quota_active_tables, &entry, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
+    (void)hash_search(pg_quota_active_tables, &relFileNode->node, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
     LWLockRelease(pg_quota_active_table_lock);
-    elog(LOG, "append: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
+    elog(LOG, "append: spcNode = %i, dbNode = %i, relNode = %i, found = %s", relFileNode->node.spcNode, relFileNode->node.dbNode, relFileNode->node.relNode, found ? "true" : "false");
 }
 
 static void pg_quota_active_table_remove(const RelFileNodeBackend *relFileNode) {
     bool found;
-    PgQuotaActiveTableFileEntry entry = {
-        .dbid = relFileNode->node.dbNode,
-        .relfilenode = relFileNode->node.relNode,
-        .tablespaceoid = relFileNode->node.spcNode,
-    };
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
-    (void)hash_search(pg_quota_active_tables, &entry, HASH_REMOVE, &found);
+    (void)hash_search(pg_quota_active_tables, &relFileNode->node, HASH_REMOVE, &found);
     LWLockRelease(pg_quota_active_table_lock);
-    elog(LOG, "remove: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
+    elog(LOG, "remove: spcNode = %i, dbNode = %i, relNode = %i, found = %s", relFileNode->node.spcNode, relFileNode->node.dbNode, relFileNode->node.relNode, found ? "true" : "false");
 }
 
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
@@ -197,11 +181,11 @@ static void pg_quota_shmem_startup_hook(void) {
         pg_quota_active_table_lock = LWLockAssign();
 #endif
         HASHCTL ctl = {
-            .entrysize = sizeof(PgQuotaActiveTableFileEntry),
+            .entrysize = sizeof(RelFileNode),
 #if GP_VERSION_NUM < 70000
             .hash = tag_hash,
 #endif
-            .keysize = sizeof(PgQuotaActiveTableFileEntry),
+            .keysize = sizeof(RelFileNode),
         };
         pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     }
