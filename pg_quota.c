@@ -37,7 +37,7 @@ static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
 static file_truncate_hook_type prev_file_truncate_hook;
 static file_unlink_hook_type prev_file_unlink_hook;
-static HTAB *active_tables_map;
+static HTAB *pg_quota_active_tables;
 static int pg_quota_launcher_fetch;
 static int pg_quota_launcher_restart;
 static int pg_quota_max_active_tables;
@@ -45,9 +45,6 @@ static int pg_quota_worker_restart;
 static LWLock *pg_quota_active_table_lock;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
-#if PG_VERSION_NUM >= 150000
-static shmem_request_hook_type prev_shmem_request_hook;
-#endif
 
 #if PG_VERSION_NUM < 130000
 static volatile sig_atomic_t ShutdownRequestPending = false;
@@ -79,7 +76,7 @@ static void pg_quota_active_table_append(const RelFileNodeBackend *relFileNode) 
         .tablespaceoid = relFileNode->node.spcNode,
     };
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
-    (void)hash_search(active_tables_map, &entry, hash_get_num_entries(active_tables_map) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
+    (void)hash_search(pg_quota_active_tables, &entry, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
     LWLockRelease(pg_quota_active_table_lock);
     elog(LOG, "append: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
 }
@@ -92,7 +89,7 @@ static void pg_quota_active_table_remove(const RelFileNodeBackend *relFileNode) 
         .tablespaceoid = relFileNode->node.spcNode,
     };
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
-    (void)hash_search(active_tables_map, &entry, HASH_REMOVE, &found);
+    (void)hash_search(pg_quota_active_tables, &entry, HASH_REMOVE, &found);
     LWLockRelease(pg_quota_active_table_lock);
     elog(LOG, "remove: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
 }
@@ -189,12 +186,6 @@ static void pg_quota_timeout(void) {
     elog(LOG, "ShutdownRequestPending = %s", ShutdownRequestPending ? "true" : "false");
 }
 
-#if PG_VERSION_NUM >= 150000
-static void pg_quota_shmem_request_hook(void) {
-    if (prev_shmem_request_hook) prev_shmem_request_hook();
-}
-#endif
-
 static void pg_quota_shmem_startup_hook(void) {
     if (prev_shmem_startup_hook) prev_shmem_startup_hook();
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
@@ -205,8 +196,11 @@ static void pg_quota_shmem_startup_hook(void) {
 #else
         pg_quota_active_table_lock = LWLockAssign();
 #endif
-        HASHCTL ctl = {0};
-        active_tables_map = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+        HASHCTL ctl = {
+            .entrysize = sizeof(PgQuotaActiveTableFileEntry),
+            .keysize = sizeof(PgQuotaActiveTableFileEntry),
+        };
+        pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     }
     LWLockRelease(AddinShmemInitLock);
 }
