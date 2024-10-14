@@ -26,6 +26,12 @@ typedef struct PgQuotaWorker {
     Oid oid;
 } PgQuotaWorker;
 
+typedef struct PgQuotaActiveTableFileEntry {
+    Oid dbid;
+    Oid relfilenode;
+    Oid tablespaceoid;
+} PgQuotaActiveTableFileEntry;
+
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
 static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
@@ -36,6 +42,7 @@ static int pg_quota_launcher_fetch;
 static int pg_quota_launcher_restart;
 static int pg_quota_max_active_tables;
 static int pg_quota_worker_restart;
+static LWLock *pg_quota_active_table_lock;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
 #if PG_VERSION_NUM >= 150000
@@ -57,6 +64,39 @@ SignalHandlerForConfigReload(SIGNAL_ARGS)
 }
 #endif
 
+static Size PgQuotaShmemSize(void)
+{
+    Size size = 0;
+    size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(PgQuotaActiveTableFileEntry)));
+    return size;
+}
+
+static void pg_quota_active_table_append(const RelFileNodeBackend *relFileNode) {
+    bool found;
+    PgQuotaActiveTableFileEntry entry = {
+        .dbid = relFileNode->node.dbNode,
+        .relfilenode = relFileNode->node.relNode,
+        .tablespaceoid = relFileNode->node.spcNode,
+    };
+    LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
+    (void)hash_search(active_tables_map, &entry, hash_get_num_entries(active_tables_map) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found);
+    LWLockRelease(pg_quota_active_table_lock);
+    elog(LOG, "append: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
+}
+
+static void pg_quota_active_table_remove(const RelFileNodeBackend *relFileNode) {
+    bool found;
+    PgQuotaActiveTableFileEntry entry = {
+        .dbid = relFileNode->node.dbNode,
+        .relfilenode = relFileNode->node.relNode,
+        .tablespaceoid = relFileNode->node.spcNode,
+    };
+    LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
+    (void)hash_search(active_tables_map, &entry, HASH_REMOVE, &found);
+    LWLockRelease(pg_quota_active_table_lock);
+    elog(LOG, "remove: dbid = %i, relfilenode = %i, tablespaceoid = %i, found = %s", entry.dbid, entry.relfilenode, entry.tablespaceoid, found ? "true" : "false");
+}
+
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
     if (prev_ExecutorCheckPerms_hook) return prev_ExecutorCheckPerms_hook(rangeTable, ereport_on_violation);
     return true;
@@ -64,18 +104,22 @@ static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_v
 
 static void pg_quota_file_create_hook(RelFileNodeBackend rnode) {
     if (prev_file_create_hook) prev_file_create_hook(rnode);
+    pg_quota_active_table_append(&rnode);
 }
 
 static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
     if (prev_file_extend_hook) prev_file_extend_hook(rnode);
+    pg_quota_active_table_append(&rnode);
 }
 
 static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
     if (prev_file_truncate_hook) prev_file_truncate_hook(rnode);
+    pg_quota_active_table_append(&rnode);
 }
 
 static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
     if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
+    pg_quota_active_table_remove(&rnode);
 }
 
 static void pg_quota_launcher_start(bool dynamic) {
@@ -155,6 +199,12 @@ static void pg_quota_shmem_startup_hook(void) {
     if (prev_shmem_startup_hook) prev_shmem_startup_hook();
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
     {
+#if GP_VERSION_NUM >= 70000
+        LWLockPadded *lock_base = GetNamedLWLockTranche("PgQuotaLocks");
+        pg_quota_active_table_lock = &lock_base[0].lock;
+#else
+        pg_quota_active_table_lock = LWLockAssign();
+#endif
         HASHCTL ctl = {0};
         active_tables_map = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     }
@@ -200,11 +250,11 @@ void _PG_init(void) {
     prev_file_unlink_hook = file_unlink_hook; file_unlink_hook = pg_quota_file_unlink_hook;
     prev_object_access_hook = object_access_hook; object_access_hook = pg_quota_object_access_hook;
     prev_shmem_startup_hook = shmem_startup_hook; shmem_startup_hook = pg_quota_shmem_startup_hook;
-#if PG_VERSION_NUM >= 150000
-    prev_shmem_request_hook = shmem_request_hook; shmem_request_hook = pg_quota_shmem_request_hook;
-#elif PG_VERSION_NUM >= 90600
-    RequestAddinShmemSpace(init_taskshared_memsize());
-    RequestAddinShmemSpace(init_workshared_memsize());
+    RequestAddinShmemSpace(PgQuotaShmemSize());
+#if GP_VERSION_NUM >= 70000
+    RequestNamedLWLockTranche("PgQuotaLocks", 1);
+#else
+    RequestAddinLWLocks(1);
 #endif
     pg_quota_launcher_start(false);
 }
