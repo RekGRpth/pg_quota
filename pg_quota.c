@@ -31,6 +31,7 @@ static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
 static file_truncate_hook_type prev_file_truncate_hook;
 static file_unlink_hook_type prev_file_unlink_hook;
+static HTAB *active_tables_map;
 static int pg_quota_launcher_fetch;
 static int pg_quota_launcher_restart;
 static int pg_quota_max_active_tables;
@@ -155,7 +156,7 @@ static void pg_quota_shmem_startup_hook(void) {
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
     {
         HASHCTL ctl = {0};
-        //active_tables_map = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+        active_tables_map = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     }
     LWLockRelease(AddinShmemInitLock);
 }

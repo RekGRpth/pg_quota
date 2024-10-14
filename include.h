@@ -18,6 +18,12 @@
 #include <cdb/cdbvars.h>
 #endif
 
+#if GP_VERSION_NUM >= 70000
+#define ShmemInitHashMy(name, init_size, max_size, infoP, hash_flags) ShmemInitHash(name, init_size, max_size, infoP, hash_flags | HASH_BLOBS)
+#else
+#define ShmemInitHashMy(name, init_size, max_size, infoP, hash_flags) ShmemInitHash(name, init_size, max_size, infoP, hash_flags | HASH_FUNCTION)
+#endif
+
 #if PG_VERSION_NUM >= 90500
 #define set_config_option_my(name, value, context, source, action, changeVal, elevel) set_config_option(name, value, context, source, action, changeVal, elevel, false)
 #else
