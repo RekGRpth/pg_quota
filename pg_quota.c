@@ -1,5 +1,6 @@
 #include "include.h"
 
+#include <access/xact.h>
 #include <catalog/objectaccess.h>
 #include <executor/executor.h>
 #include <pgstat.h>
@@ -32,6 +33,7 @@ typedef struct PgQuotaWorker {
     Oid oid;
 } PgQuotaWorker;
 
+static bool pg_quota_hardlimit;
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
 static file_create_hook_type prev_file_create_hook;
 static file_extend_hook_type prev_file_extend_hook;
@@ -68,6 +70,9 @@ static Size PgQuotaShmemSize(void)
     return size;
 }
 
+static void pg_quota_check_rejectmap_by_relfilenode(RelFileNode *node) {
+}
+
 static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
     bool found;
     PgQuotaActiveTableFileEntry *entry;
@@ -102,6 +107,7 @@ static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
     Oid relid = RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode);
     elog(LOG, "relid = %i, spcNode = %i, dbNode = %i, relNode = %i", relid, rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_append(relid, &rnode.node);
+    if (IsTransactionState() && pg_quota_hardlimit) pg_quota_check_rejectmap_by_relfilenode(&rnode.node);
 }
 
 static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
@@ -245,6 +251,7 @@ BackgroundWorkerInitializeConnectionByOid(Oid dboid, Oid useroid)
 
 void _PG_init(void) {
     if (!process_shared_preload_libraries_in_progress) ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("This module can only be loaded via shared_preload_libraries")));
+    DefineCustomBoolVariable("pg_quota.hard_limit", "pg_quota hard limit", "Set this to 'on' to enable quota hardlimit.", &pg_quota_hardlimit, false, PGC_SIGHUP, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &pg_quota_launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &pg_quota_launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.max_active_tables", "pg_quota max active tables", "Max number of active tables monitored by pg_quota.", &pg_quota_max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
