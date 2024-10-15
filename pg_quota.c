@@ -72,7 +72,7 @@ static Size PgQuotaShmemSize(void)
     return size;
 }
 
-static void pg_quota_check_rejectmap_by_relfilenode(RelFileNode *node) {
+static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *node) {
     if (!IsTransactionState()) return;
     if (!pg_quota_hardlimit) return;
     elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", node->spcNode, node->dbNode, node->relNode);
@@ -207,7 +207,7 @@ static void pg_quota_object_access_hook(ObjectAccessType access, Oid classId, Oi
     }
 }
 
-static void pg_quota_worker_start(PgQuotaWorker *w) {
+static void pg_quota_worker_start(const PgQuotaWorker *w) {
     BackgroundWorkerHandle *handle;
     BackgroundWorker worker = {0};
     pid_t pid;
