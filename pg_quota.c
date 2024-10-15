@@ -81,18 +81,29 @@ SignalHandlerForConfigReload(SIGNAL_ARGS)
 }
 #endif
 
+static List *pg_quota_get_index_list(Oid relid) {
+    HeapTuple htup;
+    List *result = NIL;
+    Relation indrel = heap_open(IndexRelationId, AccessShareLock);
+    ScanKeyData skey;
+    ScanKeyInit(&skey, Anum_pg_index_indrelid, BTEqualStrategyNumber, F_OIDEQ, relid);
+    SysScanDesc indscan = systable_beginscan(indrel, IndexIndrelidIndexId, true, NULL, 1, &skey);
+    while (HeapTupleIsValid(htup = systable_getnext(indscan))) {
+        Form_pg_index index = (Form_pg_index)GETSTRUCT(htup);
+        if (!index->indislive) continue;
+        result = lappend_oid(result, index->indexrelid);
+    }
+    systable_endscan(indscan);
+    heap_close(indrel, AccessShareLock);
+    return result;
+}
+
 static Size PgQuotaShmemSize(void)
 {
     Size size = 0;
     size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(PgQuotaActiveTable)));
     size = add_size(size, hash_estimate_size(pg_quota_max_reject_tables, sizeof(PgQuotaRejectTable)));
     return size;
-}
-
-static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *node) {
-    if (!IsTransactionState()) return;
-    if (!pg_quota_hardlimit) return;
-    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", node->spcNode, node->dbNode, node->relNode);
 }
 
 static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
@@ -112,27 +123,16 @@ static void pg_quota_active_table_remove(const RelFileNode *node) {
     elog(LOG, "found = %s", found ? "true" : "false");
 }
 
+static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *node) {
+    if (!IsTransactionState()) return;
+    if (!pg_quota_hardlimit) return;
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", node->spcNode, node->dbNode, node->relNode);
+}
+
 static void pg_quota_check_rejectmap_by_relid(Oid relid) {
     if (!IsTransactionState()) return;
     if (!OidIsValid(relid)) return;
     elog(LOG, "relid = %i", relid);
-}
-
-static List *pg_quota_get_index_list(Oid relid) {
-    HeapTuple htup;
-    List *result = NIL;
-    Relation indrel = heap_open(IndexRelationId, AccessShareLock);
-    ScanKeyData skey;
-    ScanKeyInit(&skey, Anum_pg_index_indrelid, BTEqualStrategyNumber, F_OIDEQ, relid);
-    SysScanDesc indscan = systable_beginscan(indrel, IndexIndrelidIndexId, true, NULL, 1, &skey);
-    while (HeapTupleIsValid(htup = systable_getnext(indscan))) {
-        Form_pg_index index = (Form_pg_index)GETSTRUCT(htup);
-        if (!index->indislive) continue;
-        result = lappend_oid(result, index->indexrelid);
-    }
-    systable_endscan(indscan);
-    heap_close(indrel, AccessShareLock);
-    return result;
 }
 
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
