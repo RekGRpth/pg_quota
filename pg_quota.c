@@ -201,22 +201,20 @@ static void pg_quota_timeout(void) {
 static void pg_quota_shmem_startup_hook(void) {
     if (prev_shmem_startup_hook) prev_shmem_startup_hook();
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
-    {
 #if GP_VERSION_NUM >= 70000
-        LWLockPadded *lock_base = GetNamedLWLockTranche("PgQuotaLocks");
-        pg_quota_active_table_lock = &lock_base[0].lock;
+    LWLockPadded *lock_base = GetNamedLWLockTranche("PgQuotaLocks");
+    pg_quota_active_table_lock = &lock_base[0].lock;
 #else
-        pg_quota_active_table_lock = LWLockAssign();
+    pg_quota_active_table_lock = LWLockAssign();
 #endif
-        HASHCTL ctl = {
-            .entrysize = sizeof(PgQuotaActiveTableFileEntry),
+    HASHCTL ctl = {
+        .entrysize = sizeof(PgQuotaActiveTableFileEntry),
 #if GP_VERSION_NUM < 70000
-            .hash = tag_hash,
+        .hash = tag_hash,
 #endif
-            .keysize = sizeof(RelFileNode),
-        };
-        pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
-    }
+        .keysize = sizeof(RelFileNode),
+    };
+    pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
     LWLockRelease(AddinShmemInitLock);
 }
 
