@@ -288,7 +288,7 @@ static void pg_quota_shmem_startup_hook(void) {
 #if GP_VERSION_NUM < 70000
         .hash = tag_hash,
 #endif
-        .keysize = sizeof(RelFileNode),
+        .keysize = sizeof(RejectMapEntry),
     };
     pg_quota_reject_tables = ShmemInitHashMy("pg_quota_reject_tables", pg_quota_max_reject_tables, pg_quota_max_reject_tables, &ctl, HASH_ELEM | HASH_FUNCTION);}
     LWLockRelease(AddinShmemInitLock);
