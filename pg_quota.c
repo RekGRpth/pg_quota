@@ -2,6 +2,7 @@
 
 #include <access/xact.h>
 #include <catalog/objectaccess.h>
+#include <catalog/indexing.h>
 #include <executor/executor.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
@@ -9,6 +10,7 @@
 #include <storage/proc.h>
 #include <tcop/utility.h>
 #include <utils/builtins.h>
+#include <utils/fmgroids.h>
 #include <utils/memutils.h>
 #include <utils/ps_status.h>
 #include <utils/relfilenodemap.h>
@@ -71,6 +73,9 @@ static Size PgQuotaShmemSize(void)
 }
 
 static void pg_quota_check_rejectmap_by_relfilenode(RelFileNode *node) {
+    if (!IsTransactionState()) return;
+    if (!pg_quota_hardlimit) return;
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", node->spcNode, node->dbNode, node->relNode);
 }
 
 static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
@@ -90,7 +95,47 @@ static void pg_quota_active_table_remove(const RelFileNode *node) {
     elog(LOG, "found = %s", found ? "true" : "false");
 }
 
+static void pg_quota_check_rejectmap_by_relid(Oid relid) {
+    if (!IsTransactionState()) return;
+    if (!OidIsValid(relid)) return;
+    elog(LOG, "relid = %i", relid);
+}
+
+static List *pg_quota_get_index_list(Oid relid) {
+    HeapTuple htup;
+    List *result = NIL;
+    Relation indrel = heap_open(IndexRelationId, AccessShareLock);
+    ScanKeyData skey;
+    ScanKeyInit(&skey, Anum_pg_index_indrelid, BTEqualStrategyNumber, F_OIDEQ, relid);
+    SysScanDesc indscan = systable_beginscan(indrel, IndexIndrelidIndexId, true, NULL, 1, &skey);
+    while (HeapTupleIsValid(htup = systable_getnext(indscan))) {
+        Form_pg_index index = (Form_pg_index)GETSTRUCT(htup);
+        if (!index->indislive) continue;
+        result = lappend_oid(result, index->indexrelid);
+    }
+    systable_endscan(indscan);
+    heap_close(indrel, AccessShareLock);
+    return result;
+}
+
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
+    ListCell *lc;
+    foreach (lc, rangeTable) {
+        RangeTblEntry *rte = (RangeTblEntry *)lfirst(lc);
+        if (rte->rtekind != RTE_RELATION) continue;
+        if ((rte->requiredPerms & ACL_INSERT) == 0 && (rte->requiredPerms & ACL_UPDATE) == 0) continue;
+        pg_quota_check_rejectmap_by_relid(rte->relid);
+        List *indexIds = pg_quota_get_index_list(rte->relid);
+        if (indexIds == NIL) continue;
+        ListCell *oid;
+        PG_TRY();
+            foreach (oid, indexIds) pg_quota_check_rejectmap_by_relid(lfirst_oid(oid));
+        PG_CATCH();
+            list_free(indexIds);
+            PG_RE_THROW();
+        PG_END_TRY();
+        list_free(indexIds);
+    }
     if (prev_ExecutorCheckPerms_hook) return prev_ExecutorCheckPerms_hook(rangeTable, ereport_on_violation);
     return true;
 }
@@ -107,7 +152,7 @@ static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
     Oid relid = RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode);
     elog(LOG, "relid = %i, spcNode = %i, dbNode = %i, relNode = %i", relid, rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_append(relid, &rnode.node);
-    if (IsTransactionState() && pg_quota_hardlimit) pg_quota_check_rejectmap_by_relfilenode(&rnode.node);
+    pg_quota_check_rejectmap_by_relfilenode(&rnode.node);
 }
 
 static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
