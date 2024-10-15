@@ -74,7 +74,7 @@ static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     if ((entry = hash_search(pg_quota_active_tables, node, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found))) entry->relid = relid;
     LWLockRelease(pg_quota_active_table_lock);
-    elog(LOG, "append: spcNode = %i, dbNode = %i, relNode = %i, relid = %i, found = %s", node->spcNode, node->dbNode, node->relNode, relid, found ? "true" : "false");
+    elog(LOG, "relid = %i, found = %s", relid, found ? "true" : "false");
 }
 
 static void pg_quota_active_table_remove(const RelFileNode *node) {
@@ -82,7 +82,7 @@ static void pg_quota_active_table_remove(const RelFileNode *node) {
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     (void)hash_search(pg_quota_active_tables, node, HASH_REMOVE, &found);
     LWLockRelease(pg_quota_active_table_lock);
-    elog(LOG, "remove: spcNode = %i, dbNode = %i, relNode = %i, found = %s", node->spcNode, node->dbNode, node->relNode, found ? "true" : "false");
+    elog(LOG, "found = %s", found ? "true" : "false");
 }
 
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
@@ -92,21 +92,25 @@ static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_v
 
 static void pg_quota_file_create_hook(RelFileNodeBackend rnode) {
     if (prev_file_create_hook) prev_file_create_hook(rnode);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_append(RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode), &rnode.node);
 }
 
 static void pg_quota_file_extend_hook(RelFileNodeBackend rnode) {
     if (prev_file_extend_hook) prev_file_extend_hook(rnode);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_append(RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode), &rnode.node);
 }
 
 static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
     if (prev_file_truncate_hook) prev_file_truncate_hook(rnode);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_append(RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode), &rnode.node);
 }
 
 static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
     if (prev_file_unlink_hook) prev_file_unlink_hook(rnode);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
     pg_quota_active_table_remove(&rnode.node);
 }
 
@@ -133,6 +137,7 @@ static void pg_quota_launcher_start(bool dynamic) {
 
 static void report_relation_cache_helper(Oid relid) {
     Relation rel = RelationIdGetRelation(relid);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rel->rd_node.spcNode, rel->rd_node.dbNode, rel->rd_node.relNode);
     pg_quota_active_table_append(relid, &rel->rd_node);
     RelationClose(rel);
 }
