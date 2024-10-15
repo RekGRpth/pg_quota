@@ -77,7 +77,7 @@ static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
     elog(LOG, "found = %s", found ? "true" : "false");
 }
 
-static void pg_quota_active_table_remove(Oid relid, const RelFileNode *node) {
+static void pg_quota_active_table_remove(const RelFileNode *node) {
     bool found;
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     (void)hash_search(pg_quota_active_tables, node, HASH_REMOVE, &found);
@@ -113,9 +113,8 @@ static void pg_quota_file_truncate_hook(RelFileNodeBackend rnode) {
 
 static void pg_quota_file_unlink_hook(RelFileNodeBackend rnode) {
     if (prev_file_unlink_hook) prev_file_unlink_hook(rnode);
-    Oid relid = RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode);
-    elog(LOG, "relid = %i, spcNode = %i, dbNode = %i, relNode = %i", relid, rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
-    pg_quota_active_table_remove(relid, &rnode.node);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", rnode.node.spcNode, rnode.node.dbNode, rnode.node.relNode);
+    pg_quota_active_table_remove(&rnode.node);
 }
 
 static void pg_quota_launcher_start(bool dynamic) {
