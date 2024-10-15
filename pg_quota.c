@@ -23,10 +23,24 @@
 
 PG_MODULE_MAGIC;
 
-typedef struct PgQuotaActiveTableFileEntry {
+typedef struct PgQuotaActiveTable {
     RelFileNode node; // ALWAYS FISRT !!!
     Oid relid;
-} PgQuotaActiveTableFileEntry;
+} PgQuotaActiveTable;
+
+typedef struct RejectMapEntry {
+    Oid databaseoid;
+    Oid tablespaceoid;
+    Oid targetoid;
+    RelFileNode relfilenode;
+    uint32 targettype;
+} RejectMapEntry;
+
+typedef struct PgQuotaRejectTable {
+    RejectMapEntry keyitem; // ALWAYS FISRT !!!
+    bool segexceeded;
+    RejectMapEntry auxblockinfo;
+} PgQuotaRejectTable;
 
 typedef struct PgQuotaWorker {
     char datname[NAMEDATALEN];
@@ -42,9 +56,11 @@ static file_extend_hook_type prev_file_extend_hook;
 static file_truncate_hook_type prev_file_truncate_hook;
 static file_unlink_hook_type prev_file_unlink_hook;
 static HTAB *pg_quota_active_tables;
+static HTAB *pg_quota_reject_tables;
 static int pg_quota_launcher_fetch;
 static int pg_quota_launcher_restart;
 static int pg_quota_max_active_tables;
+static int pg_quota_max_reject_tables;
 static int pg_quota_worker_restart;
 static LWLock *pg_quota_active_table_lock;
 static object_access_hook_type prev_object_access_hook;
@@ -68,7 +84,8 @@ SignalHandlerForConfigReload(SIGNAL_ARGS)
 static Size PgQuotaShmemSize(void)
 {
     Size size = 0;
-    size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(PgQuotaActiveTableFileEntry)));
+    size = add_size(size, hash_estimate_size(pg_quota_max_active_tables, sizeof(PgQuotaActiveTable)));
+    size = add_size(size, hash_estimate_size(pg_quota_max_reject_tables, sizeof(PgQuotaRejectTable)));
     return size;
 }
 
@@ -80,7 +97,7 @@ static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *node) {
 
 static void pg_quota_active_table_append(Oid relid, const RelFileNode *node) {
     bool found;
-    PgQuotaActiveTableFileEntry *entry;
+    PgQuotaActiveTable *entry;
     LWLockAcquire(pg_quota_active_table_lock, LW_EXCLUSIVE);
     if ((entry = hash_search(pg_quota_active_tables, node, hash_get_num_entries(pg_quota_active_tables) < pg_quota_max_active_tables ? HASH_ENTER : HASH_FIND, &found)) && relid != InvalidOid) entry->relid = relid;
     LWLockRelease(pg_quota_active_table_lock);
@@ -258,14 +275,22 @@ static void pg_quota_shmem_startup_hook(void) {
 #else
     pg_quota_active_table_lock = LWLockAssign();
 #endif
-    HASHCTL ctl = {
-        .entrysize = sizeof(PgQuotaActiveTableFileEntry),
+    {HASHCTL ctl = {
+        .entrysize = sizeof(PgQuotaActiveTable),
 #if GP_VERSION_NUM < 70000
         .hash = tag_hash,
 #endif
         .keysize = sizeof(RelFileNode),
     };
-    pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+    pg_quota_active_tables = ShmemInitHashMy("pg_quota_active_tables", pg_quota_max_active_tables, pg_quota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);}
+    {HASHCTL ctl = {
+        .entrysize = sizeof(PgQuotaRejectTable),
+#if GP_VERSION_NUM < 70000
+        .hash = tag_hash,
+#endif
+        .keysize = sizeof(RelFileNode),
+    };
+    pg_quota_reject_tables = ShmemInitHashMy("pg_quota_reject_tables", pg_quota_max_reject_tables, pg_quota_max_reject_tables, &ctl, HASH_ELEM | HASH_FUNCTION);}
     LWLockRelease(AddinShmemInitLock);
 }
 
@@ -300,6 +325,7 @@ void _PG_init(void) {
     DefineCustomIntVariable("pg_quota.launcher_fetch", "pg_quota launcher fetch", "Fetch launcher rows at once", &pg_quota_launcher_fetch, 10, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.launcher_restart", "pg_quota launcher restart", "Restart launcher interval, seconds", &pg_quota_launcher_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.max_active_tables", "pg_quota max active tables", "Max number of active tables monitored by pg_quota.", &pg_quota_max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+    DefineCustomIntVariable("pg_quota.max_reject_tables", "pg_quota max reject tables", "Max number of reject entries.", &pg_quota_max_reject_tables, 8192, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
     DefineCustomIntVariable("pg_quota.worker_restart", "pg_quota worker restart", "Restart worker interval, seconds", &pg_quota_worker_restart, BGW_DEFAULT_RESTART_INTERVAL, 1, INT_MAX, PGC_SUSET, 0, NULL, NULL, NULL);
     if (IsRoleMirror()) return;
     prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook; ExecutorCheckPerms_hook = pg_quota_ExecutorCheckPerms_hook;
