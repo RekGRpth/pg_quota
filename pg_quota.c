@@ -63,6 +63,7 @@ static int pg_quota_max_active_tables;
 static int pg_quota_max_reject_tables;
 static int pg_quota_worker_restart;
 static LWLock *pg_quota_active_table_lock;
+static LWLock *pg_quota_reject_table_lock;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
 
@@ -123,10 +124,21 @@ static void pg_quota_active_table_remove(const RelFileNode *node) {
     elog(LOG, "found = %s", found ? "true" : "false");
 }
 
-static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *node) {
+static void export_exceeded_error(PgQuotaRejectTable *entry, bool skip_name) {
+}
+
+static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *relfilenode) {
     if (!IsTransactionState()) return;
     if (!pg_quota_hardlimit) return;
-    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", node->spcNode, node->dbNode, node->relNode);
+    elog(LOG, "spcNode = %i, dbNode = %i, relNode = %i", relfilenode->spcNode, relfilenode->dbNode, relfilenode->relNode);
+    bool found;
+    RejectMapEntry keyitem = {.relfilenode = *relfilenode};
+    LWLockAcquire(pg_quota_reject_table_lock, LW_SHARED);
+    PgQuotaRejectTable *entry = hash_search(pg_quota_reject_tables, &keyitem, HASH_FIND, &found);
+    if (!found) { LWLockRelease(pg_quota_reject_table_lock); return; }
+    PgQuotaRejectTable segrejectentry = {.keyitem = entry->auxblockinfo, .segexceeded = entry->segexceeded};
+    LWLockRelease(pg_quota_reject_table_lock);
+    export_exceeded_error(&segrejectentry, true);
 }
 
 static void pg_quota_check_rejectmap_by_relid(Oid relid) {
@@ -272,8 +284,10 @@ static void pg_quota_shmem_startup_hook(void) {
 #if GP_VERSION_NUM >= 70000
     LWLockPadded *lock_base = GetNamedLWLockTranche("PgQuotaLocks");
     pg_quota_active_table_lock = &lock_base[0].lock;
+    pg_quota_reject_table_lock = &lock_base[1].lock;
 #else
     pg_quota_active_table_lock = LWLockAssign();
+    pg_quota_reject_table_lock = LWLockAssign();
 #endif
     {HASHCTL ctl = {
         .entrysize = sizeof(PgQuotaActiveTable),
@@ -337,9 +351,9 @@ void _PG_init(void) {
     prev_shmem_startup_hook = shmem_startup_hook; shmem_startup_hook = pg_quota_shmem_startup_hook;
     RequestAddinShmemSpace(PgQuotaShmemSize());
 #if GP_VERSION_NUM >= 70000
-    RequestNamedLWLockTranche("PgQuotaLocks", 1);
+    RequestNamedLWLockTranche("PgQuotaLocks", 2);
 #else
-    RequestAddinLWLocks(1);
+    RequestAddinLWLocks(2);
 #endif
     pg_quota_launcher_start(false);
 }
