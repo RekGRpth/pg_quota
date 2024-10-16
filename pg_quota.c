@@ -135,16 +135,35 @@ static void pg_quota_check_rejectmap_by_relfilenode(const RelFileNode *relfileno
     RejectMapEntry keyitem = {.relfilenode = *relfilenode};
     LWLockAcquire(pg_quota_reject_table_lock, LW_SHARED);
     PgQuotaRejectTable *entry = hash_search(pg_quota_reject_tables, &keyitem, HASH_FIND, &found);
-    if (!found) { LWLockRelease(pg_quota_reject_table_lock); return; }
-    PgQuotaRejectTable segrejectentry = {.keyitem = entry->auxblockinfo, .segexceeded = entry->segexceeded};
+    if (found) {
+        LWLockRelease(pg_quota_reject_table_lock);
+        export_exceeded_error(entry, true);
+        return;
+    }
     LWLockRelease(pg_quota_reject_table_lock);
-    export_exceeded_error(&segrejectentry, true);
 }
 
 static void pg_quota_check_rejectmap_by_relid(Oid relid) {
     if (!IsTransactionState()) return;
     if (!OidIsValid(relid)) return;
     elog(LOG, "relid = %i", relid);
+    Oid nsOid;
+    Oid ownerOid;
+    Oid tablespaceoid;
+//    if (!get_rel_owner_schema_tablespace(relid, &ownerOid, &nsOid, &tablespaceoid)) return;
+    LWLockAcquire(pg_quota_reject_table_lock, LW_SHARED);
+//    for (QuotaType type = 0; type < NUM_QUOTA_TYPES; type++) {
+        RejectMapEntry keyitem;
+//        prepare_rejectmap_search_key(&keyitem, type, ownerOid, nsOid, tablespaceoid);
+        bool found;
+        PgQuotaRejectTable *entry = hash_search(pg_quota_reject_tables, &keyitem, HASH_FIND, &found);
+        if (found) {
+            LWLockRelease(pg_quota_reject_table_lock);
+//            export_exceeded_error(entry, false);
+            return;
+        }
+//    }
+    LWLockRelease(pg_quota_reject_table_lock);
 }
 
 static bool pg_quota_ExecutorCheckPerms_hook(List *rangeTable, bool ereport_on_violation) {
