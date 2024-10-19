@@ -1,13 +1,15 @@
 #include "include.h"
 
 #include <access/xact.h>
-#include <catalog/objectaccess.h>
 #include <catalog/indexing.h>
+#include <catalog/objectaccess.h>
 #include <executor/executor.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
 #include <storage/ipc.h>
 #include <storage/proc.h>
+#include <storage/shm_mq.h>
+#include <storage/shm_toc.h>
 #include <tcop/utility.h>
 #include <utils/builtins.h>
 #include <utils/fmgroids.h>
@@ -20,6 +22,9 @@
 #include <miscadmin.h>
 #include <signal.h>
 #endif
+
+#define PG_QUOTA_MAGIC 0x70675F71
+#define PG_QUOTA_QUEUE_SIZE (16 * 1024)
 
 PG_MODULE_MAGIC;
 
@@ -66,6 +71,7 @@ static LWLock *pg_quota_active_table_lock;
 static LWLock *pg_quota_reject_table_lock;
 static object_access_hook_type prev_object_access_hook;
 static shmem_startup_hook_type prev_shmem_startup_hook;
+static shm_mq *pg_quota_mq;
 
 #if PG_VERSION_NUM < 130000
 static volatile sig_atomic_t ShutdownRequestPending = false;
@@ -297,6 +303,16 @@ static void pg_quota_timeout(void) {
     elog(LOG, "ShutdownRequestPending = %s", ShutdownRequestPending ? "true" : "false");
 }
 
+static Size pg_quota_shmem_size(void) {
+    shm_toc_estimator e;
+    shm_toc_initialize_estimator(&e);
+    int nkeys = 1;
+    shm_toc_estimate_chunk(&e, (Size) PG_QUOTA_QUEUE_SIZE);
+    shm_toc_estimate_keys(&e, nkeys);
+    Size size = shm_toc_estimate(&e);
+    return size;
+}
+
 static void pg_quota_shmem_startup_hook(void) {
     if (prev_shmem_startup_hook) prev_shmem_startup_hook();
     LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
@@ -324,6 +340,17 @@ static void pg_quota_shmem_startup_hook(void) {
         .keysize = sizeof(RejectMapEntry),
     };
     pg_quota_reject_tables = ShmemInitHashMy("pg_quota_reject_tables", pg_quota_max_reject_tables, pg_quota_max_reject_tables, &ctl, HASH_ELEM | HASH_FUNCTION);}
+    bool found;
+    Size segsize = pg_quota_shmem_size();
+    void *sh = ShmemInitStruct("pg_quota", segsize, &found);
+    if (!found) {
+        shm_toc *toc = shm_toc_create(PG_QUOTA_MAGIC, sh, segsize);
+        pg_quota_mq = shm_toc_allocate(toc, PG_QUOTA_QUEUE_SIZE);
+        shm_toc_insert(toc, 0, pg_quota_mq);
+    } else {
+        shm_toc *toc = shm_toc_attach(PG_QUOTA_MAGIC, sh);
+        pg_quota_mq = shm_toc_lookup(toc, 0, false);
+    }
     LWLockRelease(AddinShmemInitLock);
 }
 
