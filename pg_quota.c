@@ -489,7 +489,7 @@ void pg_quota_worker(Datum arg) {
             INSTR_TIME_SET_CURRENT(start_time_timeout);
             current_timeout = timeout;
         }
-        int rc = WaitLatchMy(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, timeout);
+        int rc = WaitLatchMy(MyLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, current_timeout);
         if (rc & WL_POSTMASTER_DEATH) ShutdownRequestPending = true;
         if (rc & WL_LATCH_SET) pg_quota_latch();
         INSTR_TIME_SET_CURRENT(current_time_timeout);
