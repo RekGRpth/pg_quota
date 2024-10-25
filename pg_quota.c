@@ -452,7 +452,9 @@ void pg_quota_launcher(Datum arg) {
             text_to_cstring_buffer((text *)DatumGetPointer(SPI_getbinval_my(val, tupdesc, "rolname", false, TEXTOID)), w.rolname, sizeof(w.rolname));
             elog(LOG, "row = %lu, rolname = %s, datname = %s, oid = %i, timeout = %li", row, w.rolname, w.datname, w.oid, w.timeout);
             pg_quota_worker_start(&w);
+            SPI_freetuple(val);
         }
+        SPI_freetuptable(SPI_tuptable);
     } while (SPI_processed);
     SPI_cursor_close_my(portal);
     SPI_finish_my();
