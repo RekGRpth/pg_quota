@@ -440,7 +440,7 @@ void pg_quota_launcher(Datum arg) {
     SPI_connect_my(src.data);
     portal = SPI_cursor_open_with_args_my(src.data, 0, NULL, NULL, NULL, true);
     do {
-        SPI_cursor_fetch(portal, true, pg_quota_launcher_fetch);
+        SPI_cursor_fetch_my(portal, true, pg_quota_launcher_fetch);
         for (uint64 row = 0; row < SPI_processed; row++) {
             HeapTuple val = SPI_tuptable->vals[row];
             TupleDesc tupdesc = SPI_tuptable->tupdesc;
@@ -454,7 +454,6 @@ void pg_quota_launcher(Datum arg) {
             pg_quota_worker_start(&w);
             SPI_freetuple(val);
         }
-        SPI_freetuptable(SPI_tuptable);
     } while (SPI_processed);
     SPI_cursor_close_my(portal);
     SPI_finish_my();
